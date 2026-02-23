@@ -51,6 +51,7 @@ const INGREDIENTS: Record<string, string> = {
   "meat ball": "Meat_ball",
   broccoli: "Broccoli",
   sugar: "Sugar",
+  soda: "Soda",
 };
 
 export const defaultIngredientImage = { uri: `${BASE_URL}/default.png` };

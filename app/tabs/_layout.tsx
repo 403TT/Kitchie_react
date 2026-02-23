@@ -2,7 +2,7 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useEffect, useRef } from "react";
-import { Animated, Easing, StyleSheet, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Alert, Animated, Easing, StyleSheet, TouchableOpacity, View, useWindowDimensions } from "react-native";
 
 export default function TabsLayout() {
   return (
@@ -103,7 +103,7 @@ function AnimatedTabBar({ state, navigation }: any) {
       case "stockscreen":
         return <Feather name="edit-3" size={24} color={color} />;
       case "recipescreen":
-        return <Ionicons name="restaurant" size={26} color={color} />;
+        return <Ionicons name="restaurant" size={26} color={color} style={{ opacity: 0.4 }} />;
       case "shoppingscreen":
         return <Ionicons name="cart" size={26} color={color} />;
       case "profilescreen":
@@ -136,6 +136,10 @@ function AnimatedTabBar({ state, navigation }: any) {
 
           const onPress = () => {
             if (!isFocused) {
+              if (route.name === "recipescreen") {
+                Alert.alert("Disabled for now...");
+                return;
+              }
               navigation.navigate(route.name);
             }
           };

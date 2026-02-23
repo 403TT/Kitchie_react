@@ -117,6 +117,75 @@ const isValidIngredient = (name: string): boolean => {
 };
 
 /* =========================================================
+   Unit Conversion System
+   - Mass family:   g, kg              → base unit: g
+   - Volume family: ml, L, cup, tbsp, tsp → base unit: ml
+   - Countable:     x, unit             → base unit: unit
+   Ingredients with compatible units are automatically compared
+   and deducted correctly (e.g. 1 kg pantry – 20 g recipe = 980 g).
+========================================================= */
+type UnitFamily = "mass" | "volume" | "countable";
+
+/** Conversion factor TO the family's base unit */
+const UNIT_TO_BASE: Record<string, { family: UnitFamily; factor: number }> = {
+  // Mass → grams
+  g:    { family: "mass",      factor: 1 },
+  kg:   { family: "mass",      factor: 1000 },
+  // Volume → millilitres
+  ml:   { family: "volume",    factor: 1 },
+  l:    { family: "volume",    factor: 1000 },
+  cup:  { family: "volume",    factor: 240 },
+  tbsp: { family: "volume",    factor: 15 },
+  tsp:  { family: "volume",    factor: 5 },
+  // Countable → units
+  x:    { family: "countable", factor: 1 },
+  unit: { family: "countable", factor: 1 },
+};
+
+/** Normalise a unit string so look-ups are case-insensitive */
+const normalizeUnit = (u: string | undefined): string => (u ?? "x").trim().toLowerCase();
+
+/** Convert a quantity + unit into the base unit of its family (g / ml / unit) */
+const toBaseQty = (qty: number, unit: string): { base: number; family: UnitFamily } | null => {
+  const info = UNIT_TO_BASE[normalizeUnit(unit)];
+  if (!info) return null;
+  return { base: qty * info.factor, family: info.family };
+};
+
+/** Convert a base-unit quantity back into a target display unit */
+const fromBaseQty = (baseQty: number, targetUnit: string): number | null => {
+  const info = UNIT_TO_BASE[normalizeUnit(targetUnit)];
+  if (!info) return null;
+  return baseQty / info.factor;
+};
+
+/** Are two units in the same family? */
+const unitsCompatible = (a: string | undefined, b: string | undefined): boolean => {
+  const infoA = UNIT_TO_BASE[normalizeUnit(a)];
+  const infoB = UNIT_TO_BASE[normalizeUnit(b)];
+  if (!infoA || !infoB) return false;
+  return infoA.family === infoB.family;
+};
+
+/**
+ * Given a base-unit total, pick the best display unit for its family.
+ *   Mass:   ≥ 1000 g  → kg, otherwise g
+ *   Volume: ≥ 1000 ml → L,  otherwise ml
+ *   Countable: always "unit"
+ */
+const bestUnitForBase = (baseQty: number, family: UnitFamily): { qty: number; unit: string } => {
+  if (family === "mass") {
+    if (baseQty >= 1000) return { qty: Math.round((baseQty / 1000) * 100) / 100, unit: "kg" };
+    return { qty: Math.round(baseQty * 100) / 100, unit: "g" };
+  }
+  if (family === "volume") {
+    if (baseQty >= 1000) return { qty: Math.round((baseQty / 1000) * 100) / 100, unit: "l" };
+    return { qty: Math.round(baseQty * 100) / 100, unit: "ml" };
+  }
+  return { qty: Math.round(baseQty * 100) / 100, unit: "unit" };
+};
+
+/* =========================================================
    Component
 ========================================================= */
 const RecipeScreen: FC = () => {
@@ -222,11 +291,12 @@ const RecipeScreen: FC = () => {
      Pantry name -> numeric qty map
   ------------------------------ */
   const pantryQtyMap = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<string, { qty: number; unit: string }>();
     for (const item of pantry) {
       const key = normalize(item.name);
       const qty = parseQty(item.quantity);
-      map.set(key, qty);
+      const unit = normalizeUnit(item.unit);
+      map.set(key, { qty, unit });
     }
     return map;
   }, [pantry]);
@@ -247,11 +317,31 @@ const RecipeScreen: FC = () => {
     (recipe: Recipe) => {
       return recipe.ingredients.map((ri) => {
         const key = normalize(ri.name);
-        const haveQty = pantryQtyMap.get(key) ?? 0;
+        const pantryEntry = pantryQtyMap.get(key);
         const needQty = ri.quantity ?? 1;
-        const hasIt = haveQty >= needQty && haveQty > 0;
+        const recipeUnit = normalizeUnit(ri.unit);
 
-        return { ...ri, key, hasIt, haveQty, needQty };
+        if (!pantryEntry) {
+          return { ...ri, key, hasIt: false, haveQty: 0, needQty };
+        }
+
+        const { qty: haveRaw, unit: pantryUnit } = pantryEntry;
+
+        // If units are compatible, convert both to base for comparison
+        if (unitsCompatible(pantryUnit, recipeUnit)) {
+          const haveBase = toBaseQty(haveRaw, pantryUnit);
+          const needBase = toBaseQty(needQty, recipeUnit);
+          if (haveBase && needBase) {
+            const hasIt = haveBase.base >= needBase.base && haveBase.base > 0;
+            // Show "haveQty" in the recipe's unit for display
+            const haveInRecipeUnit = fromBaseQty(haveBase.base, recipeUnit) ?? haveRaw;
+            return { ...ri, key, hasIt, haveQty: Math.round(haveInRecipeUnit * 100) / 100, needQty };
+          }
+        }
+
+        // Fallback: direct numeric comparison (incompatible or unknown units)
+        const hasIt = haveRaw >= needQty && haveRaw > 0;
+        return { ...ri, key, hasIt, haveQty: haveRaw, needQty };
       });
     },
     [pantryQtyMap]
@@ -467,28 +557,67 @@ const RecipeScreen: FC = () => {
       for (const ri of recipe.ingredients) {
         const key = normalize(ri.name);
         const need = ri.quantity ?? 1;
+        const recipeUnit = normalizeUnit(ri.unit);
 
         const idx = indexByName.get(key);
-        const have = idx !== undefined ? parseNumber(nextPantry[idx].quantity) : 0;
-
-        if (have < need) {
-          Alert.alert(
-            "Not enough ingredients",
-            `You don't have enough ${toTitle(ri.name)}.\nNeed: x${need}\nHave: x${have}`
-          );
+        if (idx === undefined) {
+          Alert.alert("Not enough ingredients", `You don't have ${toTitle(ri.name)} in your inventory.`);
           return;
         }
 
-        const remaining = have - need;
+        const pantryItem = nextPantry[idx];
+        const have = parseNumber(pantryItem.quantity);
+        const pantryUnit = normalizeUnit(pantryItem.unit);
+
+        let remaining: number;
+        let remainingUnit: string = pantryUnit;
+
+        if (unitsCompatible(pantryUnit, recipeUnit)) {
+          // Convert both to base units, subtract, convert back to pantry's unit
+          const haveBase = toBaseQty(have, pantryUnit);
+          const needBase = toBaseQty(need, recipeUnit);
+
+          if (haveBase && needBase) {
+            if (haveBase.base < needBase.base) {
+              const haveDisplay = fromBaseQty(haveBase.base, recipeUnit) ?? have;
+              Alert.alert(
+                "Not enough ingredients",
+                `You don't have enough ${toTitle(ri.name)}.\nNeed: ${need} ${recipeUnit}\nHave: ${Math.round(haveDisplay * 100) / 100} ${recipeUnit}`
+              );
+              return;
+            }
+            const remainingBase = haveBase.base - needBase.base;
+            // Pick best display unit for what's left (auto-downscale e.g. 0.08 kg → 80 g)
+            const best = bestUnitForBase(remainingBase, haveBase.family);
+            remaining = best.qty;
+            remainingUnit = best.unit;
+          } else {
+            // Fallback
+            if (have < need) {
+              Alert.alert("Not enough ingredients", `You don't have enough ${toTitle(ri.name)}.`);
+              return;
+            }
+            remaining = have - need;
+          }
+        } else {
+          // Incompatible units — direct subtraction
+          if (have < need) {
+            Alert.alert(
+              "Not enough ingredients",
+              `You don't have enough ${toTitle(ri.name)}.\nNeed: ${need} ${recipeUnit}\nHave: ${have} ${pantryUnit}`
+            );
+            return;
+          }
+          remaining = have - need;
+        }
 
         if (remaining <= 0) {
-          nextPantry.splice(idx!, 1);
-
+          nextPantry.splice(idx, 1);
           // rebuild indices after splice
           indexByName.clear();
           nextPantry.forEach((p, i) => indexByName.set(normalize(p.name), i));
         } else {
-          nextPantry[idx!] = { ...nextPantry[idx!], quantity: formatNumber(remaining) };
+          nextPantry[idx] = { ...nextPantry[idx], quantity: formatNumber(remaining), unit: remainingUnit };
         }
       }
 
@@ -722,7 +851,7 @@ const RecipeScreen: FC = () => {
                         />
                       </View>
                       <Text style={styles.ingredientName}>{toTitle(ing.name)}</Text>
-                      <Text style={styles.ingredientQty}>x{ing.needQty}</Text>
+                      <Text style={styles.ingredientQty}>{ing.needQty} {ing.unit && ing.unit !== "x" ? ing.unit : "x"}</Text>
                       <Ionicons name="chevron-forward" size={18} color="#d4b5b8" />
                     </View>
                   );
@@ -756,7 +885,7 @@ const RecipeScreen: FC = () => {
                           />
                         </View>
                         <Text style={styles.ingredientNameNeeded}>{toTitle(ing.name)}</Text>
-                        <Text style={styles.ingredientQtyNeeded}>x{ing.needQty}</Text>
+                        <Text style={styles.ingredientQtyNeeded}>{ing.needQty} {ing.unit && ing.unit !== "x" ? ing.unit : "x"}</Text>
                         <Ionicons name="chevron-forward" size={18} color="#d4b5b8" />
                       </TouchableOpacity>
 

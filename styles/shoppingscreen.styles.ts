@@ -271,6 +271,26 @@ export const styles = StyleSheet.create({
     fontWeight: "800",
   },
 
+  /* Suggestions */
+  suggestionBox: {
+    marginTop: 8,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(183,116,124,0.18)",
+  },
+  suggestionItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(183,116,124,0.10)",
+  },
+  suggestionText: {
+    color: "#b7747c",
+    fontWeight: "900",
+  },
+
   /* Buttons */
   modalButtonsRow: {
     flexDirection: "row",

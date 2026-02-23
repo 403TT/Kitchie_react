@@ -64,10 +64,31 @@ export const styles = StyleSheet.create({
   },
 
   /* =========================
-   * CATEGORY FILTER (horizontal scroll)
+   * SEARCH BAR
+   * ========================= */
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    height: 40,
+    backgroundColor: "rgba(255,255,255,0.65)",
+    marginBottom: 10,
+  },
+  searchInput: {
+    flex: 1,
+    height: 40,
+    color: "#b7747c",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+
+  /* =========================
+   * CATEGORY FILTER (horizontal)
    * ========================= */
   categoryScroll: {
-    maxHeight: 44,
+    maxHeight: 38,
     marginBottom: 12,
   },
   categoryFilterRow: {
@@ -80,7 +101,7 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 20,
     backgroundColor: "rgba(255,255,255,0.65)",
     gap: 5,
@@ -118,70 +139,40 @@ export const styles = StyleSheet.create({
   },
 
   /* =========================
-   * LIST CONTENT
+   * GRID
    * ========================= */
-  listContent: {
-    paddingVertical: 4,
+  gridContent: {
     paddingBottom: 20,
+  },
+  gridRow: {
+    justifyContent: "flex-start",
+    gap: 8,
+    marginBottom: 8,
   },
 
   /* =========================
-   * LIST ITEM CARD (new list view)
+   * GRID TILE
    * ========================= */
-  listItemCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+  gridTile: {
+    width: "18%",
+    aspectRatio: 0.78,
     backgroundColor: "rgba(255,255,255,0.55)",
-    borderRadius: 16,
-    marginBottom: 8,
-  },
-  listItemImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    marginRight: 12,
-  },
-  listItemContent: {
-    flex: 1,
+    borderRadius: 14,
+    alignItems: "center",
     justifyContent: "center",
+    padding: 4,
   },
-  listItemName: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#7a4d45",
+  gridTileImage: {
+    width: "72%",
+    aspectRatio: 1,
+    borderRadius: 8,
     marginBottom: 3,
   },
-  listItemDetails: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  listItemQty: {
-    fontSize: 13,
-    color: "#b7867c",
-    fontWeight: "600",
-  },
-  listItemCategoryBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    backgroundColor: "rgba(183,116,124,0.08)",
-  },
-  listItemCategoryText: {
+  gridTileQty: {
     fontSize: 11,
-    fontWeight: "700",
-    color: "#b7747c",
-  },
-  listItemRight: {
-    alignItems: "flex-end",
-    justifyContent: "center",
-    gap: 4,
-    marginLeft: 8,
+    fontWeight: "900",
+    color: "#7a4d45",
+    textAlign: "center",
   },
 
   /* =========================

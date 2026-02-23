@@ -39,21 +39,10 @@ type Ingredient = {
 ========================================================= */
 const STORAGE_KEY = "kitchie.ingredients.v1";
 
-const CATEGORIES = [
-  { key: "all", label: "All", icon: "grid-outline" as const },
-  { key: "produce", label: "Vegetable", icon: "leaf-outline" as const },
-  { key: "dairy", label: "Dairy", icon: "water-outline" as const },
-  { key: "meat", label: "Meat", icon: "flame-outline" as const },
-  { key: "grains", label: "Fruit", icon: "nutrition-outline" as const },
-  { key: "spices", label: "Spices", icon: "color-filter-outline" as const },
-  { key: "frozen", label: "Frozen", icon: "snow-outline" as const },
-  { key: "other", label: "Other", icon: "ellipsis-horizontal-outline" as const },
-];
-
-const CATEGORY_OPTIONS = CATEGORIES.filter((c) => c.key !== "all");
+const ALL_CATEGORY = "all";
 
 const METRIC_OPTIONS = [
-  { key: "unit", label: "unit" },
+  { key: "x", label: "x" },
   { key: "g", label: "g" },
   { key: "kg", label: "kg" },
   { key: "ml", label: "ml" },
@@ -107,6 +96,63 @@ const toTitle = (s: string) => {
     .join(" ");
 };
 
+/* =========================================================
+   Unit Conversion System
+========================================================= */
+type UnitFamily = "mass" | "volume" | "countable";
+
+const UNIT_TO_BASE: Record<string, { family: UnitFamily; factor: number }> = {
+  g:    { family: "mass",      factor: 1 },
+  kg:   { family: "mass",      factor: 1000 },
+  ml:   { family: "volume",    factor: 1 },
+  l:    { family: "volume",    factor: 1000 },
+  cup:  { family: "volume",    factor: 240 },
+  tbsp: { family: "volume",    factor: 15 },
+  tsp:  { family: "volume",    factor: 5 },
+  x:    { family: "countable", factor: 1 },
+  unit: { family: "countable", factor: 1 },
+};
+
+const normalizeUnit = (u: string | undefined): string => (u ?? "x").trim().toLowerCase();
+
+const toBaseQty = (qty: number, unit: string): { base: number; family: UnitFamily } | null => {
+  const info = UNIT_TO_BASE[normalizeUnit(unit)];
+  if (!info) return null;
+  return { base: qty * info.factor, family: info.family };
+};
+
+const fromBaseQty = (baseQty: number, targetUnit: string): number | null => {
+  const info = UNIT_TO_BASE[normalizeUnit(targetUnit)];
+  if (!info) return null;
+  return baseQty / info.factor;
+};
+
+const unitsCompatible = (a: string | undefined, b: string | undefined): boolean => {
+  const infoA = UNIT_TO_BASE[normalizeUnit(a)];
+  const infoB = UNIT_TO_BASE[normalizeUnit(b)];
+  if (!infoA || !infoB) return false;
+  return infoA.family === infoB.family;
+};
+
+/**
+ * Given a base-unit total, pick the best display unit for its family.
+ * Rules:
+ *   Mass:   ≥ 1000 g  → kg, otherwise g
+ *   Volume: ≥ 1000 ml → L,  otherwise ml
+ *   Countable: always "unit"
+ */
+const bestUnitForBase = (baseQty: number, family: UnitFamily): { qty: number; unit: string } => {
+  if (family === "mass") {
+    if (baseQty >= 1000) return { qty: Math.round((baseQty / 1000) * 100) / 100, unit: "kg" };
+    return { qty: Math.round(baseQty * 100) / 100, unit: "g" };
+  }
+  if (family === "volume") {
+    if (baseQty >= 1000) return { qty: Math.round((baseQty / 1000) * 100) / 100, unit: "l" };
+    return { qty: Math.round(baseQty * 100) / 100, unit: "ml" };
+  }
+  return { qty: Math.round(baseQty * 100) / 100, unit: "unit" };
+};
+
 /** Format an ISO date string to a friendly display format */
 const formatDate = (iso: string | undefined) => {
   if (!iso) return "";
@@ -139,11 +185,12 @@ const StockScreen: FC = () => {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [selectedItem, setSelectedItem] = useState<Ingredient | null>(null);
   const [activeCategory, setActiveCategory] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [editName, setEditName] = useState("");
   const [editQuantity, setEditQuantity] = useState("");
   const [editUnit, setEditUnit] = useState("");
-  const [editCategory, setEditCategory] = useState("other");
+  const [editCategory, setEditCategory] = useState("");
   const [editExpiryDate, setEditExpiryDate] = useState("");
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -198,10 +245,29 @@ const StockScreen: FC = () => {
   }, [ingredients]);
 
   // Filtered ingredients by category
+  // Derive unique categories from ingredients
+  const userCategories = useMemo(() => {
+    const catSet = new Set<string>();
+    for (const ing of ingredients) {
+      const cat = (ing.category || "").trim();
+      if (cat) catSet.add(cat);
+    }
+    // Sort alphabetically
+    return Array.from(catSet).sort((a, b) => a.localeCompare(b));
+  }, [ingredients]);
+
+  // Filtered ingredients by category + search
   const filteredIngredients = useMemo(() => {
-    if (activeCategory === "all") return ingredients;
-    return ingredients.filter((ing) => (ing.category || "other") === activeCategory);
-  }, [ingredients, activeCategory]);
+    let result = ingredients;
+    if (activeCategory !== ALL_CATEGORY) {
+      result = result.filter((ing) => (ing.category || "") === activeCategory);
+    }
+    const q = normalize(searchQuery);
+    if (q) {
+      result = result.filter((ing) => normalize(ing.name).includes(q));
+    }
+    return result;
+  }, [ingredients, activeCategory, searchQuery]);
 
   // Autocomplete suggestions
   const ingredientSuggestions = useMemo(() => {
@@ -215,7 +281,7 @@ const StockScreen: FC = () => {
     setEditName(item.name);
     setEditQuantity(item.quantity);
     setEditUnit(item.unit || "x");
-    setEditCategory(item.category || "other");
+    setEditCategory(item.category || "");
     setEditExpiryDate(item.expiryDate ? isoToExpiry(item.expiryDate) : "");
     setSelectedIngredientKey(item.name);
     setShowSuggestions(false);
@@ -229,7 +295,7 @@ const StockScreen: FC = () => {
     setEditName("");
     setEditQuantity("");
     setEditUnit("");
-    setEditCategory("other");
+    setEditCategory("");
     setEditExpiryDate("");
     setSelectedIngredientKey(null);
     setShowSuggestions(false);
@@ -243,7 +309,7 @@ const StockScreen: FC = () => {
     setEditName("");
     setEditQuantity("");
     setEditUnit("x");
-    setEditCategory("other");
+    setEditCategory("");
     setEditExpiryDate("");
     setSelectedIngredientKey(null);
     setShowSuggestions(false);
@@ -294,7 +360,7 @@ const StockScreen: FC = () => {
         name: key,
         quantity: "1",
         unit: "x",
-        category: "other",
+        category: "",
       }));
       setIngredients(allItems);
       closeEdit();
@@ -322,21 +388,41 @@ const StockScreen: FC = () => {
     const nameKey = normalize(candidate);
 
     setIngredients((prev) => {
-      const existingIndex = prev.findIndex(
-        (ing) =>
-          normalize(ing.name) === nameKey && (ing.unit?.toLowerCase() || "x") === unitRaw
-      );
+      // Look for an existing entry with the same name AND compatible unit family
+      const existingIndex = prev.findIndex((ing) => {
+        if (normalize(ing.name) !== nameKey) return false;
+        const existingUnit = normalizeUnit(ing.unit);
+        return existingUnit === unitRaw || unitsCompatible(existingUnit, unitRaw);
+      });
 
       if (existingIndex !== -1) {
         const existing = prev[existingIndex];
         const existingQty = parseNumber(existing.quantity);
-        const nextQty = existingQty + qtyToAdd;
+        const existingUnit = normalizeUnit(existing.unit);
+
+        // Convert both to base, sum, then pick best display unit
+        const existBase = toBaseQty(existingQty, existingUnit);
+        const addBase = toBaseQty(qtyToAdd, unitRaw);
+
+        let finalQty: number;
+        let finalUnit: string;
+
+        if (existBase && addBase && existBase.family === addBase.family) {
+          const totalBase = existBase.base + addBase.base;
+          const best = bestUnitForBase(totalBase, existBase.family);
+          finalQty = best.qty;
+          finalUnit = best.unit;
+        } else {
+          // Fallback: same-unit direct add
+          finalQty = existingQty + qtyToAdd;
+          finalUnit = unitRaw;
+        }
 
         const updated: Ingredient = {
           ...existing,
-          quantity: formatNumber(nextQty),
-          unit: unitRaw,
-          category: editCategory,
+          quantity: formatNumber(finalQty),
+          unit: finalUnit,
+          category: editCategory.trim(),
           expiryDate: expiryToIso(editExpiryDate) || existing.expiryDate,
         };
 
@@ -350,7 +436,7 @@ const StockScreen: FC = () => {
         name: candidate,
         quantity: formatNumber(qtyToAdd),
         unit: unitRaw,
-        category: editCategory,
+        category: editCategory.trim(),
         expiryDate: expiryToIso(editExpiryDate),
       };
 
@@ -383,7 +469,7 @@ const StockScreen: FC = () => {
               name: candidate,
               quantity: editQuantity.trim() || ing.quantity,
               unit: (editUnit.trim() || "x").toLowerCase(),
-              category: editCategory,
+              category: editCategory.trim(),
               expiryDate: expiryToIso(editExpiryDate),
             }
           : ing
@@ -400,70 +486,27 @@ const StockScreen: FC = () => {
   };
 
   /* =========================================================
-     Render: List Item
+     Render: Grid Tile
   ========================================================= */
   const renderItem = ({ item }: { item: Ingredient }) => {
-    const expiryStatus = getExpiryStatus(item.expiryDate);
-    const categoryObj = CATEGORY_OPTIONS.find((c) => c.key === (item.category || "other"));
+    const unitDisplay = normalizeUnit(item.unit);
+    const qtyDisplay = item.quantity;
+    const label = unitDisplay === "x" || unitDisplay === "unit"
+      ? `${qtyDisplay}x`
+      : `${qtyDisplay} ${item.unit}`;
 
     return (
       <TouchableOpacity
-        style={styles.listItemCard}
+        style={styles.gridTile}
         activeOpacity={0.8}
         onPress={() => openEdit(item)}
       >
-        <Image source={getIngredientImage(getBaseIngredient(item.name))} style={styles.listItemImage}/>
-
-        <View style={styles.listItemContent}>
-          <Text style={styles.listItemName}>{toTitle(item.name)}</Text>
-          <View style={styles.listItemDetails}>
-            <Text style={styles.listItemQty}>
-              {item.quantity} {item.unit}
-            </Text>
-            {categoryObj && (
-              <View style={styles.listItemCategoryBadge}>
-                <Ionicons name={categoryObj.icon} size={12} color="#b7747c" />
-                <Text style={styles.listItemCategoryText}>{categoryObj.label}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.listItemRight}>
-          {item.expiryDate ? (
-            <View
-              style={[
-                styles.expiryBadge,
-                expiryStatus === "expired" && styles.expiryBadgeExpired,
-                expiryStatus === "soon" && styles.expiryBadgeSoon,
-                expiryStatus === "ok" && styles.expiryBadgeOk,
-              ]}
-            >
-              <Ionicons
-                name="time-outline"
-                size={12}
-                color={
-                  expiryStatus === "expired"
-                    ? "#d32f2f"
-                    : expiryStatus === "soon"
-                    ? "#e65100"
-                    : "#558b2f"
-                }
-              />
-              <Text
-                style={[
-                  styles.expiryBadgeText,
-                  expiryStatus === "expired" && styles.expiryTextExpired,
-                  expiryStatus === "soon" && styles.expiryTextSoon,
-                  expiryStatus === "ok" && styles.expiryTextOk,
-                ]}
-              >
-                {expiryStatus === "expired" ? "Expired" : formatDate(item.expiryDate)}
-              </Text>
-            </View>
-          ) : null}
-          <Ionicons name="chevron-forward" size={16} color="#d4b5b0" />
-        </View>
+        <Image
+          source={getIngredientImage(getBaseIngredient(item.name))}
+          style={styles.gridTileImage}
+          contentFit="contain"
+        />
+        <Text style={styles.gridTileQty} numberOfLines={1}>{label}</Text>
       </TouchableOpacity>
     );
   };
@@ -493,7 +536,24 @@ const StockScreen: FC = () => {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.subtitle}>Look at our assortment of deliciousness.</Text>
+        {/* SEARCH BAR */}
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={18} color="#c98b92" />
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search ingredients..."
+            placeholderTextColor="#ddb8b8"
+            style={styles.searchInput}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")} activeOpacity={0.7}>
+              <Ionicons name="close-circle" size={18} color="#c98b92" />
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* CATEGORY FILTER */}
         <ScrollView
@@ -502,27 +562,41 @@ const StockScreen: FC = () => {
           contentContainerStyle={styles.categoryFilterRow}
           style={styles.categoryScroll}
         >
-          {CATEGORIES.map((cat) => {
-            const isActive = activeCategory === cat.key;
-            const count =
-              cat.key === "all"
-                ? ingredients.length
-                : ingredients.filter((i) => (i.category || "other") === cat.key).length;
-
+          {/* "All" chip */}
+          {(() => {
+            const isActive = activeCategory === ALL_CATEGORY;
             return (
               <TouchableOpacity
-                key={cat.key}
+                key="all"
                 style={[styles.categoryChip, isActive && styles.categoryChipActive]}
-                onPress={() => setActiveCategory(cat.key)}
+                onPress={() => setActiveCategory(ALL_CATEGORY)}
                 activeOpacity={0.85}
               >
-                <Ionicons
-                  name={cat.icon}
-                  size={16}
-                  color={isActive ? "#fff" : "#b7747c"}
-                />
+                <Text style={[styles.categoryChipText, isActive && styles.categoryChipTextActive]}>All</Text>
+                {ingredients.length > 0 && (
+                  <View style={[styles.categoryCountBadge, isActive && styles.categoryCountBadgeActive]}>
+                    <Text style={[styles.categoryCountText, isActive && styles.categoryCountTextActive]}>
+                      {ingredients.length}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })()}
+
+          {/* User category chips */}
+          {userCategories.map((cat) => {
+            const isActive = activeCategory === cat;
+            const count = ingredients.filter((i) => (i.category || "") === cat).length;
+            return (
+              <TouchableOpacity
+                key={cat}
+                style={[styles.categoryChip, isActive && styles.categoryChipActive]}
+                onPress={() => setActiveCategory(cat)}
+                activeOpacity={0.85}
+              >
                 <Text style={[styles.categoryChipText, isActive && styles.categoryChipTextActive]}>
-                  {cat.label}
+                  {toTitle(cat)}
                 </Text>
                 {count > 0 && (
                   <View style={[styles.categoryCountBadge, isActive && styles.categoryCountBadgeActive]}>
@@ -536,22 +610,29 @@ const StockScreen: FC = () => {
           })}
         </ScrollView>
 
-        {/* INVENTORY LIST */}
+        {/* INVENTORY GRID */}
         <FlatList
           data={filteredIngredients}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
+          numColumns={5}
+          key="grid-5"
+          columnWrapperStyle={styles.gridRow}
+          contentContainerStyle={styles.gridContent}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyBox}>
-              <Ionicons name="leaf-outline" size={48} color="#e0c4c4" />
+              <Ionicons name="leaf-outline" size={40} color="#e0c4c4" />
               <Text style={styles.emptyTitle}>
-                {activeCategory === "all"
+                {searchQuery
+                  ? "No results"
+                  : activeCategory === ALL_CATEGORY
                   ? "No ingredients yet"
-                  : `No ${CATEGORIES.find((c) => c.key === activeCategory)?.label || ""} items`}
+                  : `No ${toTitle(activeCategory)} items`}
               </Text>
-              <Text style={styles.emptySub}>Tap + to add one.</Text>
+              <Text style={styles.emptySub}>
+                {searchQuery ? "Try a different search." : "Tap + to add one."}
+              </Text>
             </View>
           }
         />
@@ -669,33 +750,18 @@ const StockScreen: FC = () => {
 
               {/* Category */}
               <Text style={[styles.createLabel, { marginTop: 14 }]}>Category</Text>
-              <View style={styles.categoryPickerRow}>
-                {CATEGORY_OPTIONS.map((cat) => {
-                  const isSelected = editCategory === cat.key;
-                  return (
-                    <TouchableOpacity
-                      key={cat.key}
-                      style={[styles.categoryPick, isSelected && styles.categoryPickActive]}
-                      onPress={() => setEditCategory(cat.key)}
-                      activeOpacity={0.85}
-                    >
-                      <Ionicons
-                        name={cat.icon}
-                        size={18}
-                        color={isSelected ? "#fff" : "#b7747c"}
-                      />
-                      <Text
-                        style={[
-                          styles.categoryPickText,
-                          isSelected && styles.categoryPickTextActive,
-                        ]}
-                      >
-                        {cat.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              <TextInput
+                value={editCategory}
+                onChangeText={setEditCategory}
+                style={styles.createInput}
+                placeholder="e.g. Dairy, Meat, Snacks..."
+                placeholderTextColor="#e0c4c4"
+                autoCapitalize="words"
+                onFocus={() => {
+                  setShowSuggestions(false);
+                  setShowMetricDropdown(false);
+                }}
+              />
 
               {/* Expiry Date */}
               <Text style={[styles.createLabel, { marginTop: 14 }]}>Expiry Date</Text>
