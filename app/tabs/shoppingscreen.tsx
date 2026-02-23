@@ -19,6 +19,12 @@ import { styles } from "../../styles/shoppingscreen.styles";
 
 import { getIngredientImage } from "../../src/ingredientImages";
 
+/** Get the base ingredient key from a potentially varianted name */
+const getBaseIngredient = (name: string): string => {
+  const match = name.match(/^(.+?)\s*\(.*\)$/);
+  return match ? match[1].trim().toLowerCase() : name.toLowerCase();
+};
+
 /* =========================================================
    Types
 ========================================================= */
@@ -360,7 +366,7 @@ const ShoppingScreen: FC = () => {
             {item.checked && <Ionicons name="checkmark" size={16} color="#fff" />}
           </TouchableOpacity>
 
-          <Image source={getIngredientImage(item.name)} style={styles.itemImage} />
+          <Image source={getIngredientImage(getBaseIngredient(item.name))} style={styles.itemImage} />
 
           <View style={styles.itemTextWrap}>
             <Text style={[styles.itemName, item.checked && styles.itemNameChecked]}>

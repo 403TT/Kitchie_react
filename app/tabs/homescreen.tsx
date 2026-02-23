@@ -20,22 +20,36 @@ type Ingredient = {
 };
 
 const STORAGE_KEY = "kitchie.ingredients.v1";
+const LAST_COOKED_KEY = "kitchie.lastCooked.ts";
 
 const HomeScreen: FC = () => {
   const router = useRouter();
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [spriteKey, setSpriteKey] = useState(0);
+  const [spriteVariant, setSpriteVariant] = useState<"thinking" | "cooking">("thinking");
 
   useFocusEffect(
     useCallback(() => {
       let alive = true;
 
+      // Bump key to force AnimatedCookingSprite remount
+      setSpriteKey((prev) => prev + 1);
+
       (async () => {
         try {
-          const raw = await AsyncStorage.getItem(STORAGE_KEY);
-          if (raw && alive) {
-            setIngredients(JSON.parse(raw));
-          } else if (alive) {
-            setIngredients([]);
+          const [raw, lastCookedRaw] = await Promise.all([
+            AsyncStorage.getItem(STORAGE_KEY),
+            AsyncStorage.getItem(LAST_COOKED_KEY),
+          ]);
+          if (!alive) return;
+
+          setIngredients(raw ? JSON.parse(raw) : []);
+
+          // Show cooking sprite if user has cooked a recipe, otherwise thinking
+          if (lastCookedRaw) {
+            setSpriteVariant("cooking");
+          } else {
+            setSpriteVariant("thinking");
           }
         } catch (e) {
           console.warn("Failed to load pantry", e);
@@ -68,7 +82,7 @@ const HomeScreen: FC = () => {
       <View style={styles.kitchenArea}>
         {/* Middle shelf */}
         <View style={styles.produce}>
-          {ingredients.slice(0, 8).map((item) => {  // .slice(0,8) << Capping homescreen to only 8 ingredients 
+          {ingredients.slice(0, 8).map((item) => {
             const asset = getIngredientAsset(item.name);
             return (
               <WiggleImage
@@ -80,9 +94,9 @@ const HomeScreen: FC = () => {
           })}
         </View>
 
-        {/* Animated cooking sprite */}
+        {/* Animated cooking sprite — key change forces remount & new random set */}
         <View style={styles.cookingSprite}>
-          <AnimatedCookingSprite />
+          <AnimatedCookingSprite key={spriteKey} variant={spriteVariant} />
         </View>
       </View>
     </SafeAreaView>

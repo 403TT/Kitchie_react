@@ -303,7 +303,7 @@ export const styles = StyleSheet.create({
     flex: 1,
   },
   inputRowItemSmall: {
-    width: 90,
+    width: 100,
   },
 
   /* =========================

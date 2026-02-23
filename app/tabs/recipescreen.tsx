@@ -85,6 +85,37 @@ const DISH_IMAGE_CHOICES = [
   { key: "bento", emoji: "🍱", label: "Bento" },
 ];
 
+const METRIC_OPTIONS = [
+  { key: "x", label: "x" },
+  { key: "g", label: "g" },
+  { key: "kg", label: "kg" },
+  { key: "ml", label: "ml" },
+  { key: "L", label: "L" },
+  { key: "cup", label: "cup" },
+  { key: "tbsp", label: "tbsp" },
+  { key: "tsp", label: "tsp" },
+];
+
+/* =========================================================
+   Ingredient Variations
+========================================================= */
+const INGREDIENT_VARIATIONS: Record<string, string[]> = {
+  "soy sauce": ["Sushi", "Light", "Dark"],
+};
+
+/** Get the base ingredient key from a potentially varianted name */
+const getBaseIngredient = (name: string): string => {
+  const match = name.match(/^(.+?)\s*\(.*\)$/);
+  return match ? match[1].trim().toLowerCase() : name.toLowerCase();
+};
+
+/** Check if a name (possibly with variation) is a valid ingredient */
+const isValidIngredient = (name: string): boolean => {
+  const base = getBaseIngredient(name);
+  if (INGREDIENT_KEYS.includes(base)) return true;
+  return INGREDIENT_KEYS.includes(name.toLowerCase());
+};
+
 /* =========================================================
    Component
 ========================================================= */
@@ -114,6 +145,7 @@ const RecipeScreen: FC = () => {
   const [newIngredients, setNewIngredients] = useState<RecipeIngredient[]>([]);
   const [draftIngName, setDraftIngName] = useState("");
   const [draftIngQty, setDraftIngQty] = useState("");
+  const [draftIngMetric, setDraftIngMetric] = useState("x");
   const [draftDishImageKey, setDraftDishImageKey] = useState<string>("cake");
 
   /* -----------------------------
@@ -127,6 +159,17 @@ const RecipeScreen: FC = () => {
   ------------------------------ */
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIngredientKey, setSelectedIngredientKey] = useState<string | null>(null);
+
+  /* -----------------------------
+     Metric picker modal state
+  ------------------------------ */
+  const [showMetricModal, setShowMetricModal] = useState(false);
+
+  /* -----------------------------
+     Variation picker state
+  ------------------------------ */
+  const [showVariationPicker, setShowVariationPicker] = useState(false);
+  const [pendingVariationKey, setPendingVariationKey] = useState<string | null>(null);
 
   /* -----------------------------
      Shopping list dropdown state
@@ -245,9 +288,12 @@ const RecipeScreen: FC = () => {
     setNewIngredients([]);
     setDraftIngName("");
     setDraftIngQty("");
+    setDraftIngMetric("x");
     setDraftDishImageKey("cake");
     setSelectedIngredientKey(null);
     setShowSuggestions(false);
+    setShowVariationPicker(false);
+    setPendingVariationKey(null);
   };
 
   const openCreateModal = () => {
@@ -261,6 +307,7 @@ const RecipeScreen: FC = () => {
     setNewIngredients(recipe.ingredients ?? []);
     setDraftIngName("");
     setDraftIngQty("");
+    setDraftIngMetric("x");
     setDraftDishImageKey(recipe.imageKey ?? "cake");
     setSelectedIngredientKey(null);
     setShowSuggestions(false);
@@ -271,7 +318,7 @@ const RecipeScreen: FC = () => {
     const candidate = selectedIngredientKey ?? normalize(draftIngName);
 
     // Force selection from coded options
-    if (!INGREDIENT_KEYS.includes(candidate)) {
+    if (!isValidIngredient(candidate)) {
       Alert.alert("Pick from the list", "Please select an ingredient from suggestions.");
       return;
     }
@@ -279,10 +326,11 @@ const RecipeScreen: FC = () => {
     const qtyNum = Number(draftIngQty);
     const quantity = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : 1;
 
-    setNewIngredients((prev) => [...prev, { name: candidate, quantity }]);
+    setNewIngredients((prev) => [...prev, { name: candidate, quantity, unit: draftIngMetric }]);
 
     setDraftIngName("");
     setDraftIngQty("");
+    setDraftIngMetric("x");
     setSelectedIngredientKey(null);
     setShowSuggestions(false);
   };
@@ -453,6 +501,11 @@ const RecipeScreen: FC = () => {
         const stats = raw ? JSON.parse(raw) : { recipesCooked: 0, ingredientsBought: 0 };
         stats.recipesCooked = (stats.recipesCooked || 0) + 1;
         await AsyncStorage.setItem(STATS_KEY, JSON.stringify(stats));
+      } catch (_) {}
+
+      // Store last-cooked timestamp so homescreen shows cooking sprite
+      try {
+        await AsyncStorage.setItem("kitchie.lastCooked.ts", Date.now().toString());
       } catch (_) {}
 
       Alert.alert("Done!", "Inventory updated ✅");
@@ -658,7 +711,7 @@ const RecipeScreen: FC = () => {
                   <View style={styles.sectionDivider} />
                 </View>
                 {pantryIngredients.map((ing) => {
-                  const asset = getIngredientAsset(ing.name);
+                  const asset = getIngredientAsset(getBaseIngredient(ing.name));
                   return (
                     <View key={ing.key} style={styles.ingredientRow}>
                       <View style={styles.ingredientImageWrap}>
@@ -685,7 +738,7 @@ const RecipeScreen: FC = () => {
                   <View style={styles.sectionDividerNeeded} />
                 </View>
                 {neededIngredients.map((ing) => {
-                  const asset = getIngredientAsset(ing.name);
+                  const asset = getIngredientAsset(getBaseIngredient(ing.name));
                   const showDropdown = shoppingDropdownKey === ing.key;
 
                   return (
@@ -765,6 +818,219 @@ const RecipeScreen: FC = () => {
           </View>
         )}
       </View>
+    );
+  };
+
+  /* =========================================================
+     Shared inline overlay renderers (avoids nested Modals — fixes iOS)
+  ========================================================= */
+  const renderMetricOverlay = () => {
+    if (!showMetricModal) return null;
+    return (
+      <Pressable
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.25)",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 100,
+          borderRadius: 18,
+        }}
+        onPress={() => setShowMetricModal(false)}
+      >
+        <View
+          style={{
+            width: 220,
+            maxHeight: 360,
+            borderRadius: 18,
+            backgroundColor: "#ffe9dc",
+            padding: 6,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.15,
+            shadowRadius: 12,
+            elevation: 10,
+          }}
+          onStartShouldSetResponder={() => true}
+        >
+          <Text
+            style={{
+              fontSize: 15,
+              fontWeight: "900",
+              color: "#b7747c",
+              textAlign: "center",
+              paddingVertical: 10,
+            }}
+          >
+            Select Metric
+          </Text>
+
+          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+            {METRIC_OPTIONS.map((m) => (
+              <TouchableOpacity
+                key={m.key}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  marginHorizontal: 4,
+                  marginBottom: 4,
+                  borderRadius: 12,
+                  backgroundColor:
+                    draftIngMetric === m.key
+                      ? "rgba(242,159,155,0.25)"
+                      : "rgba(255,255,255,0.65)",
+                }}
+                activeOpacity={0.85}
+                onPress={() => {
+                  setDraftIngMetric(m.key);
+                  setShowMetricModal(false);
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: "800",
+                    color: draftIngMetric === m.key ? "#f29f9b" : "#b7747c",
+                  }}
+                >
+                  {m.label}
+                </Text>
+                {draftIngMetric === m.key && (
+                  <Ionicons name="checkmark" size={18} color="#f29f9b" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </Pressable>
+    );
+  };
+
+  const renderVariationOverlay = () => {
+    if (!showVariationPicker || !pendingVariationKey) return null;
+    return (
+      <Pressable
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.25)",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 100,
+          borderRadius: 18,
+        }}
+        onPress={() => {
+          setShowVariationPicker(false);
+          setPendingVariationKey(null);
+        }}
+      >
+        <View
+          style={{
+            width: 260,
+            maxHeight: 400,
+            borderRadius: 18,
+            backgroundColor: "#ffe9dc",
+            padding: 6,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.15,
+            shadowRadius: 12,
+            elevation: 10,
+          }}
+          onStartShouldSetResponder={() => true}
+        >
+          <Text
+            style={{
+              fontSize: 15,
+              fontWeight: "900",
+              color: "#b7747c",
+              textAlign: "center",
+              paddingVertical: 10,
+            }}
+          >
+            Select Variation
+          </Text>
+          <Text
+            style={{
+              fontSize: 12,
+              fontWeight: "700",
+              color: "#c98b92",
+              textAlign: "center",
+              marginBottom: 8,
+            }}
+          >
+            {toTitle(pendingVariationKey)}
+          </Text>
+
+          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+            <TouchableOpacity
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                paddingVertical: 12,
+                paddingHorizontal: 16,
+                marginHorizontal: 4,
+                marginBottom: 4,
+                borderRadius: 12,
+                backgroundColor: "rgba(255,255,255,0.65)",
+              }}
+              activeOpacity={0.85}
+              onPress={() => {
+                setDraftIngName(pendingVariationKey);
+                setSelectedIngredientKey(pendingVariationKey);
+                setShowVariationPicker(false);
+                setPendingVariationKey(null);
+              }}
+            >
+              <Text style={{ fontSize: 15, fontWeight: "800", color: "#b7747c" }}>
+                Regular
+              </Text>
+            </TouchableOpacity>
+
+            {(INGREDIENT_VARIATIONS[pendingVariationKey] ?? []).map((variation) => {
+              const fullName = `${pendingVariationKey} (${variation.toLowerCase()})`;
+              return (
+                <TouchableOpacity
+                  key={variation}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    marginHorizontal: 4,
+                    marginBottom: 4,
+                    borderRadius: 12,
+                    backgroundColor: "rgba(255,255,255,0.65)",
+                  }}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setDraftIngName(fullName);
+                    setSelectedIngredientKey(fullName);
+                    setShowVariationPicker(false);
+                    setPendingVariationKey(null);
+                  }}
+                >
+                  <Text style={{ fontSize: 15, fontWeight: "800", color: "#b7747c" }}>
+                    {variation}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </Pressable>
     );
   };
 
@@ -882,11 +1148,31 @@ const RecipeScreen: FC = () => {
                 <TextInput
                   value={draftIngQty}
                   onChangeText={setDraftIngQty}
-                  placeholder="qty"
+                  placeholder="amt"
                   placeholderTextColor="#e0c4c4"
                   keyboardType="numeric"
-                  style={[styles.createInput, { width: 80 }]}
+                  style={[styles.createInput, { width: 56 }]}
                 />
+
+                <TouchableOpacity
+                  onPress={() => setShowMetricModal(true)}
+                  style={[
+                    styles.createInput,
+                    {
+                      width: 52,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 2,
+                    },
+                  ]}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ color: "#b7747c", fontWeight: "800", fontSize: 13 }}>
+                    {draftIngMetric}
+                  </Text>
+                  <Ionicons name="chevron-down" size={12} color="#b7747c" />
+                </TouchableOpacity>
 
                 <TouchableOpacity onPress={addDraftIngredient} style={styles.addIngButton}>
                   <Ionicons name="add" size={18} color="#ffe9dc" />
@@ -902,9 +1188,15 @@ const RecipeScreen: FC = () => {
                       style={styles.suggestionItem}
                       activeOpacity={0.85}
                       onPress={() => {
-                        setDraftIngName(k);
-                        setSelectedIngredientKey(k);
-                        setShowSuggestions(false);
+                        if (INGREDIENT_VARIATIONS[k]) {
+                          setPendingVariationKey(k);
+                          setShowVariationPicker(true);
+                          setShowSuggestions(false);
+                        } else {
+                          setDraftIngName(k);
+                          setSelectedIngredientKey(k);
+                          setShowSuggestions(false);
+                        }
                       }}
                     >
                       <Text style={styles.suggestionText}>{toTitle(k)}</Text>
@@ -921,7 +1213,7 @@ const RecipeScreen: FC = () => {
                   {newIngredients.map((ing, idx) => (
                     <View key={`${ing.name}-${idx}`} style={styles.ingChipRow}>
                       <Text style={styles.ingChipText}>
-                        {toTitle(ing.name)} {ing.quantity ? `x${ing.quantity}` : ""}
+                        {toTitle(ing.name)} {ing.quantity ? `${ing.quantity}${ing.unit && ing.unit !== "x" ? ing.unit : "x"}` : ""}
                       </Text>
                       <TouchableOpacity onPress={() => removeIngredientAt(idx)} activeOpacity={0.8}>
                         <Ionicons name="trash-outline" size={18} color="#b7747c" />
@@ -955,6 +1247,10 @@ const RecipeScreen: FC = () => {
                 <Text style={styles.saveButtonText}>Save Recipe</Text>
               </TouchableOpacity>
             </ScrollView>
+
+            {/* Inline overlays (not nested Modals — fixes iOS) */}
+            {renderMetricOverlay()}
+            {renderVariationOverlay()}
           </View>
         </Modal>
 
@@ -1024,11 +1320,31 @@ const RecipeScreen: FC = () => {
                 <TextInput
                   value={draftIngQty}
                   onChangeText={setDraftIngQty}
-                  placeholder="qty"
+                  placeholder="amt"
                   placeholderTextColor="#e0c4c4"
                   keyboardType="numeric"
-                  style={[styles.createInput, { width: 80 }]}
+                  style={[styles.createInput, { width: 56 }]}
                 />
+
+                <TouchableOpacity
+                  onPress={() => setShowMetricModal(true)}
+                  style={[
+                    styles.createInput,
+                    {
+                      width: 52,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 2,
+                    },
+                  ]}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ color: "#b7747c", fontWeight: "800", fontSize: 13 }}>
+                    {draftIngMetric}
+                  </Text>
+                  <Ionicons name="chevron-down" size={12} color="#b7747c" />
+                </TouchableOpacity>
 
                 <TouchableOpacity onPress={addDraftIngredient} style={styles.addIngButton}>
                   <Ionicons name="add" size={18} color="#ffe9dc" />
@@ -1044,9 +1360,15 @@ const RecipeScreen: FC = () => {
                       style={styles.suggestionItem}
                       activeOpacity={0.85}
                       onPress={() => {
-                        setDraftIngName(k);
-                        setSelectedIngredientKey(k);
-                        setShowSuggestions(false);
+                        if (INGREDIENT_VARIATIONS[k]) {
+                          setPendingVariationKey(k);
+                          setShowVariationPicker(true);
+                          setShowSuggestions(false);
+                        } else {
+                          setDraftIngName(k);
+                          setSelectedIngredientKey(k);
+                          setShowSuggestions(false);
+                        }
                       }}
                     >
                       <Text style={styles.suggestionText}>{toTitle(k)}</Text>
@@ -1063,7 +1385,7 @@ const RecipeScreen: FC = () => {
                   {newIngredients.map((ing, idx) => (
                     <View key={`${ing.name}-${idx}`} style={styles.ingChipRow}>
                       <Text style={styles.ingChipText}>
-                        {toTitle(ing.name)} {ing.quantity ? `x${ing.quantity}` : ""}
+                        {toTitle(ing.name)} {ing.quantity ? `${ing.quantity}${ing.unit && ing.unit !== "x" ? ing.unit : "x"}` : ""}
                       </Text>
                       <TouchableOpacity onPress={() => removeIngredientAt(idx)} activeOpacity={0.8}>
                         <Ionicons name="trash-outline" size={18} color="#b7747c" />
@@ -1097,8 +1419,14 @@ const RecipeScreen: FC = () => {
                 <Text style={styles.saveButtonText}>Save Changes</Text>
               </TouchableOpacity>
             </ScrollView>
+
+            {/* Inline overlays (not nested Modals — fixes iOS) */}
+            {renderMetricOverlay()}
+            {renderVariationOverlay()}
           </View>
         </Modal>
+
+        {/* ===================== METRIC PICKER MODAL ===================== */}
       </View>
     </SafeAreaView>
   );
